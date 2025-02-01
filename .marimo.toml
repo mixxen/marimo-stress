@@ -1,0 +1,43 @@
+[experimental]
+
+[package_management]
+manager = "uv"
+
+[formatting]
+line_length = 79
+
+[ai]
+rules = ""
+
+[ai.open_ai]
+
+[keymap]
+preset = "default"
+
+[keymap.overrides]
+
+[server]
+follow_symlink = false
+browser = "default"
+
+[completion]
+activate_on_typing = true
+copilot = false
+
+[save]
+autosave_delay = 1000
+autosave = "after_delay"
+format_on_save = true
+
+[display]
+theme = "dark"
+code_editor_font_size = 14
+cell_output = "above"
+dataframes = "rich"
+default_width = "medium"
+
+[runtime]
+on_cell_change = "autorun"
+auto_instantiate = true
+## causes memory leak in 0.10.19
+# auto_reload = "lazy"
