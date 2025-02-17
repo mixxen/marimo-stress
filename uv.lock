@@ -168,7 +168,7 @@ name = "click"
 version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593 }
 wheels = [
@@ -621,7 +621,7 @@ wheels = [
 
 [[package]]
 name = "marimo"
-version = "0.10.19"
+version = "0.11.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -643,9 +643,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/24/1010293c645f486a4f3175f89a95ea92e0a5005b368cc34738554828734e/marimo-0.10.19.tar.gz", hash = "sha256:eec812e874156852d825f50aa738cbaf2f55d8be8d36449febce443f991ccb75", size = 11870444 }
+sdist = { url = "https://files.pythonhosted.org/packages/c3/51/48f5ffde016d2915e43e3eb256698968e9bc3f09404a551c3f51f826b2c9/marimo-0.11.4.tar.gz", hash = "sha256:a0a714fc7d19c7f69961c613cbb057b69e1cdf8f553d93730c0f12dc77923a74", size = 10594291 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/a1/6c6f7d17b2a7e11d0bbcca4dcfb392a9e8cea130b819f938ab027deba097/marimo-0.10.19-py3-none-any.whl", hash = "sha256:9e3f4ba8437359b7adcfa24dcf828eff99f6ed5e5a061b8f2943ed5b4509773a", size = 12175728 },
+    { url = "https://files.pythonhosted.org/packages/b9/83/fca76e7cf366c8f0d0ee06a81d1d2c48e0962bfd7ebbd28e88741307b9f5/marimo-0.11.4-py3-none-any.whl", hash = "sha256:5e6117a051a1686457fe3084f490071099fc9f63f63f7b1dd9cb8fb908906c7b", size = 10903541 },
 ]
 
 [[package]]
@@ -693,7 +693,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.5" },
     { name = "fastapi-keycloak", specifier = ">=1.0.11" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "marimo", specifier = ">=0.10.19" },
+    { name = "marimo", specifier = ">=0.11.0" },
     { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
     { name = "pandas", specifier = ">=2.2.3" },
@@ -939,7 +939,7 @@ plot = [
     { name = "altair" },
 ]
 timezone = [
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzdata", marker = "platform_system == 'Windows'" },
 ]
 
 [[package]]

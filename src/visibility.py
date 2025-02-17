@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.11.2"
+__generated_with = "0.11.4"
 app = marimo.App(width="full")
 
 
@@ -117,7 +117,7 @@ def _(datetime, mo):
     sensor_lat = mo.ui.number(value=20.7649, label="Sensor Latitude (°)")
     sensor_lon = mo.ui.number(value=-156.3311, label="Sensor Longitude (°)")
     sensor_alt = mo.ui.number(
-        value=0.01,  # approximately 10 m above sea level
+        value=0.1,
         label="Sensor Altitude (km)",
     )
 
@@ -201,18 +201,18 @@ def _(
     _t0_dt = _t0.utc_datetime()
     _t1_dt = _t1.utc_datetime()
     _total_minutes = int((_t1_dt - _t0_dt).total_seconds() // 60)
-    _sample_datetimes = [
+    sample_datetimes = [
         _t0_dt + datetime.timedelta(minutes=_i) for _i in range(_total_minutes + 1)
     ]
 
     # Create a Skyfield time array from the sample datetimes.
     _ts_array = ts.utc(
-        [dt.year for dt in _sample_datetimes],
-        [dt.month for dt in _sample_datetimes],
-        [dt.day for dt in _sample_datetimes],
-        [dt.hour for dt in _sample_datetimes],
-        [dt.minute for dt in _sample_datetimes],
-        [dt.second for dt in _sample_datetimes],
+        [dt.year for dt in sample_datetimes],
+        [dt.month for dt in sample_datetimes],
+        [dt.day for dt in sample_datetimes],
+        [dt.hour for dt in sample_datetimes],
+        [dt.minute for dt in sample_datetimes],
+        [dt.second for dt in sample_datetimes],
     )
 
     # Define an altitude threshold (in degrees) for a satellite to be considered "visible".
@@ -230,7 +230,13 @@ def _(
         visible_data.append(
             {"OBJECT_NAME": _s.name, "visible_minutes": _visible_minutes}
         )
-    return observer, satellites_sky, threshold_alt_deg, visible_data
+    return (
+        observer,
+        sample_datetimes,
+        satellites_sky,
+        threshold_alt_deg,
+        visible_data,
+    )
 
 
 @app.cell
@@ -243,14 +249,63 @@ def _(mo, pl, visible_data):
 
 
 @app.cell
+def _(datetime, end_date, mo, start_date, ts):
+    # Define the propagation interval using user-provided start_date and end_date
+    _t0 = ts.utc(
+        start_date.value.year,
+        start_date.value.month,
+        start_date.value.day,
+        0,
+        0,
+        0,
+    )
+    _t1 = ts.utc(
+        end_date.value.year, end_date.value.month, end_date.value.day, 23, 59, 59
+    )
+    _t0_dt = _t0.utc_datetime()
+    _t1_dt = _t1.utc_datetime()
+    _total_minutes = int((_t1_dt - _t0_dt).total_seconds() // 60)
+    sample_datetimes_ = [
+        _t0_dt + datetime.timedelta(minutes=_i) for _i in range(_total_minutes + 1)
+    ]
+    _now = datetime.datetime.now(datetime.timezone.utc)
+
+    # Find the index in sample_datetimes closest to now.
+    default_index = min(range(len(sample_datetimes_)), key=lambda i: abs(sample_datetimes_[i] - _now))
+
+    # Create a slider to let the user select a time sample index.
+    # (The slider returns a numeric value corresponding to an index in sample_datetimes.)
+    mo_slider_time_index = mo.ui.slider(
+        start=0,
+        stop=len(sample_datetimes_) - 1,
+        step=10,
+        value=default_index,
+        label="Select Time",
+        show_value=False
+    )
+    return default_index, mo_slider_time_index, sample_datetimes_
+
+
+@app.cell
+def _(mo, mo_slider_time_index, sample_datetimes_):
+    selected_dt_z = sample_datetimes_[mo_slider_time_index.value].isoformat().replace("+00:00", "Z")
+    mo.hstack([mo_slider_time_index, mo.md(f"{selected_dt_z}")], justify="start")
+    return (selected_dt_z,)
+
+
+@app.cell
 def _(
+    Topos,
     datetime,
     end_date,
+    load,
     mo,
+    mo_slider_time_index,
     np,
     observer,
     pl,
     satellites_sky,
+    sensor_alt,
     sensor_lat,
     sensor_lon,
     sensor_name,
@@ -259,6 +314,8 @@ def _(
     threshold_alt_deg,
     ts,
 ):
+    import pandas as pd
+
     _selected = table_visible.value
     mo.stop(_selected.is_empty())
     _sat_data = _selected[0]
@@ -320,9 +377,7 @@ def _(
     _alt, _az, _distance = _difference.altaz()
     _alt_degrees = _alt.degrees
 
-    # Define the altitude threshold (in degrees)
-
-    # Identify indices where the satellite's altitude exceeds (visible) or does not exceed (invisible) the threshold
+    # Define the altitude threshold (in degrees) for the satellite to be visible.
     _visible_indices = np.where(_alt_degrees > threshold_alt_deg)[0]
     _invisible_indices = np.where(_alt_degrees <= threshold_alt_deg)[0]
 
@@ -341,6 +396,91 @@ def _(
             {"time": _sample_datetimes[_i], "lat": _lats[_i], "lon": _lons[_i]}
         )
     _df_invisible_ground_track = pl.DataFrame(_invisible_ground_track)
+
+    # ----- Compute the Moon separation constraint -----
+    # Load an ephemeris and get the Moon object (using Skyfield’s de421 for example)
+    _eph = load("de421.bsp")
+    _earth = _eph['earth']
+    _moon = _eph['moon']
+
+    _observer = _earth + Topos(
+        latitude_degrees=sensor_lat.value,
+        longitude_degrees=sensor_lon.value,
+        elevation_m=sensor_alt.value * 1000,  # sensor_alt is in km, convert to meters
+    )
+
+    # Compute the Moon's apparent position as seen by the observer at all sample times
+    _moon_difference = _observer.at(_ts_array).observe(_moon)
+
+    # Calculate the angular separation (in degrees) between the satellite and the Moon
+    _moon_sep_degrees = _difference.separation_from(_moon_difference).degrees
+
+    # Define a moon separation threshold (in degrees) below which the satellite is considered blocked by the Moon.
+    threshold_moon_sep_deg = 30  # Adjust as needed
+
+    # Identify indices where the Moon separation is less than the threshold.
+    _moon_blocked_indices = np.where(_moon_sep_degrees < threshold_moon_sep_deg)[0]
+
+    # Build DataFrame for ground track points where the Moon separation constraint is violated.
+    _moon_blocked_ground_track = []
+    for _i in _moon_blocked_indices:
+        _moon_blocked_ground_track.append(
+            {"time": _sample_datetimes[_i], "lat": _lats[_i], "lon": _lons[_i]}
+        )
+    _df_moon_blocked_ground_track = pl.DataFrame(_moon_blocked_ground_track)
+    # ----- End Moon Separation Section -----
+
+    # ----- Compute the AtNightConstraint -----
+    # Compute the Sun's apparent position as seen by the observer at all sample times.
+    _sun = _eph['sun']
+    _sun_difference = _observer.at(_ts_array).observe(_sun).apparent()
+    _sun_alt, _sun_az, _sun_distance = _sun_difference.altaz()
+    _sun_alt_degrees = _sun_alt.degrees
+
+    # Define a threshold for darkness. In this example, the sensor is considered dark enough 
+    # if the Sun is below -6° (civil twilight). Adjust this value as needed.
+    threshold_sun_alt_deg = -6
+
+    # Identify indices where it is daytime (i.e. Sun altitude is greater than or equal to the threshold).
+    _daytime_indices = np.where(_sun_alt_degrees >= threshold_sun_alt_deg)[0]
+
+    # Build DataFrame for ground track points where it is daytime.
+    _daytime_ground_track = []
+    for _i in _daytime_indices:
+        _daytime_ground_track.append(
+            {"time": _sample_datetimes[_i], "lat": _lats[_i], "lon": _lons[_i]}
+        )
+    _df_daytime_ground_track = pl.DataFrame(_daytime_ground_track)
+    # ----- End AtNightConstraint Section -----
+
+    # ---------------------------
+    # Add a marker along the satellite track for a selected time.
+    # By default, we use the current UTC time.
+    # Convert current UTC time to a Python datetime object.
+    # _now = datetime.datetime.now(datetime.timezone.utc)
+
+    # # Find the index in _sample_datetimes closest to now.
+    # default_index = min(range(len(_sample_datetimes)), key=lambda i: abs(_sample_datetimes[i] - _now))
+
+    # Create a slider to let the user select a time sample index.
+    # (The slider returns a numeric value corresponding to an index in _sample_datetimes.)
+    # selected_index = mo.ui.slider(
+    #     start=0,
+    #     stop=len(_sample_datetimes) - 1,
+    #     step=1,
+    #     value=default_index,
+    #     label="Select Time Index",
+    #     show_value=True
+    # )
+    selected_index = mo_slider_time_index.value
+
+    # Build a DataFrame for the marker position on the satellite ground track
+    _marker_data = [{
+        "time": _sample_datetimes[selected_index],
+        "lat": _lats[selected_index],
+        "lon": _lons[selected_index]
+    }]
+    _df_marker = pd.DataFrame(_marker_data)
 
     # Use vega_datasets (aliased as _vega_data) and Altair (aliased as alt2) for plotting.
     from vega_datasets import data as _vega_data
@@ -379,9 +519,29 @@ def _(
         )
     )
 
-    # Build a blue dot for the sensor site.
-    import pandas as pd
+    # Plot Moon-blocked ground track points as orange dots.
+    _moon_blocked_chart = (
+        alt2.Chart(_df_moon_blocked_ground_track.to_pandas())
+        .mark_circle(size=5, color="purple")
+        .encode(
+            longitude="lon:Q",
+            latitude="lat:Q",
+            tooltip=[alt2.Tooltip("time:T", title="Time (Moon Blocked)")],
+        )
+    )
 
+    # Plot daytime ground track points as yellow dots.
+    _daytime_chart = (
+        alt2.Chart(_df_daytime_ground_track.to_pandas())
+        .mark_circle(size=5, color="yellow")
+        .encode(
+            longitude="lon:Q",
+            latitude="lat:Q",
+            tooltip=[alt2.Tooltip("time:T", title="Time (Daytime)")],
+        )
+    )
+
+    # Build a blue dot for the sensor site.
     _site_data = [
         {
             "lat": sensor_lat.value,
@@ -400,15 +560,33 @@ def _(
         )
     )
 
-    _chart = _background + _visible_chart + _invisible_chart + _site_chart
+    # Create a marker chart for the selected time (using a magenta dot)
+    _marker_chart = alt2.Chart(_df_marker).mark_point(size=50, color="magenta", shape="diamond",opacity=1).encode(
+        longitude="lon:Q",
+        latitude="lat:Q",
+        tooltip=[alt2.Tooltip("time:T", title="Selected Time")]
+    )
+    # ---------------------------
+
+    # Combine all layers: background, visible, invisible, moon-blocked, daytime, and sensor site.
+    _chart = (
+        _background
+        + _visible_chart
+        + _invisible_chart
+        + _moon_blocked_chart
+        + _daytime_chart
+        + _site_chart
+        + _marker_chart
+    )
     mo.ui.altair_chart(_chart)
     _chart
-    return alt2, pd
-
-
-@app.cell
-def _():
-    return
+    return (
+        alt2,
+        pd,
+        selected_index,
+        threshold_moon_sep_deg,
+        threshold_sun_alt_deg,
+    )
 
 
 if __name__ == "__main__":
