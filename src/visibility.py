@@ -107,16 +107,16 @@ def _(Satrec, httpx, pl):
 
 @app.cell
 def _(datetime, mo):
-    start_date = mo.ui.date(
+    _start_date = mo.ui.date(
         value=datetime.datetime.now().date(), label="Start Date"
     )
 
-    end_date = mo.ui.date(value=datetime.datetime.now().date(), label="End Date")
+    _end_date = mo.ui.date(value=datetime.datetime.now().date(), label="End Date")
 
     # Kihei, Maui approximate coordinates:
-    sensor_lat = mo.ui.number(value=20.7649, label="Sensor Latitude (°)")
-    sensor_lon = mo.ui.number(value=-156.3311, label="Sensor Longitude (°)")
-    sensor_alt = mo.ui.number(
+    _sensor_lat = mo.ui.number(value=20.7649, label="Sensor Latitude (°)")
+    _sensor_lon = mo.ui.number(value=-156.3311, label="Sensor Longitude (°)")
+    _sensor_alt = mo.ui.number(
         value=0.1,
         label="Sensor Altitude (km)",
     )
@@ -125,22 +125,22 @@ def _(datetime, mo):
         value="My Sensor", placeholder="Enter sensor name", label="Sensor Name"
     )
 
-    user_date = mo.hstack([start_date, end_date], justify="start")
-    user_site = mo.hstack([sensor_lat, sensor_lon, sensor_alt], justify="start")
-    user_input = mo.vstack([user_date, user_site])
+    user_input = mo.md(
+        "{start_date} {end_date}\n\n{sensor_lat} {sensor_lon} {sensor_alt}"
+    ).batch(
+        start_date=_start_date,
+        end_date=_end_date,
+        sensor_lat=_sensor_lat,
+        sensor_lon=_sensor_lon,
+        sensor_alt=_sensor_alt,
+    ).form()
+
+    # user_date = mo.hstack([start_date, end_date], justify="start")
+    # user_site = mo.hstack([sensor_lat, sensor_lon, sensor_alt], justify="start")
+    # user_input = mo.vstack([user_date, user_site])
 
     user_input
-    return (
-        end_date,
-        sensor_alt,
-        sensor_lat,
-        sensor_lon,
-        sensor_name,
-        start_date,
-        user_date,
-        user_input,
-        user_site,
-    )
+    return sensor_name, user_input
 
 
 @app.cell
@@ -152,19 +152,24 @@ def _(
     W,
     datetime,
     df_tles,
-    end_date,
     load,
+    mo,
     np,
-    sensor_alt,
-    sensor_lat,
-    sensor_lon,
-    start_date,
     ts,
+    user_input,
     wgs84,
 ):
+    mo.stop(not user_input.value)
+
     # Load Skyfield timescale
     _planets = load("de421.bsp")
     _earth = _planets["earth"]
+
+    start_date = user_input.value["start_date"]
+    end_date = user_input.value["end_date"]
+    sensor_lat = user_input.value["sensor_lat"]
+    sensor_lon = user_input.value["sensor_lon"]
+    sensor_alt = user_input.value["sensor_alt"]
 
     # Build a list of satellite objects from the TLE DataFrame
     satellites_sky = []
@@ -177,23 +182,23 @@ def _(
 
     # Define the start and end times using the user-provided dates (start_date and end_date are date objects)
     _t0 = ts.utc(
-        start_date.value.year,
-        start_date.value.month,
-        start_date.value.day,
+        start_date.year,
+        start_date.month,
+        start_date.day,
         0,
         0,
         0,
     )
     _t1 = ts.utc(
-        end_date.value.year, end_date.value.month, end_date.value.day, 23, 59, 59
+        end_date.year, end_date.month, end_date.day, 23, 59, 59
     )
 
     # Create an observer location using wgs84.latlon and the sensor inputs.
     # Use N if latitude is positive, S if negative; W if longitude is negative, E if positive.
     observer = wgs84.latlon(
-        sensor_lat.value * (N if sensor_lat.value >= 0 else S),
-        abs(sensor_lon.value) * (W if sensor_lon.value < 0 else E),
-        elevation_m=sensor_alt.value
+        sensor_lat * (N if sensor_lat >= 0 else S),
+        abs(sensor_lon) * (W if sensor_lon < 0 else E),
+        elevation_m=sensor_alt
         * 1000,  # sensor_alt is in km, convert to meters
     )
 
@@ -219,21 +224,29 @@ def _(
     threshold_alt_deg = 15
 
     visible_data = []
-    for _s in satellites_sky:
-        print(_s)
-        # Compute the satellite's apparent position as seen by the observer at each sample time.
-        _difference = (_s - observer).at(_ts_array)
-        _alt, _az, _distance = _difference.altaz()
-        _altitudes = _alt.degrees
-        # Count the number of minutes the satellite's altitude exceeds the threshold.
-        _visible_minutes = int(np.sum(_altitudes > threshold_alt_deg))
-        visible_data.append(
-            {"OBJECT_NAME": _s.name, "visible_minutes": _visible_minutes}
-        )
+    with mo.status.progress_bar(satellites_sky) as bar:
+        for _s in satellites_sky:
+            bar.update(title="Computing visibility", subtitle=f"Satellite: {_s.name}")
+            # Compute the satellite's apparent position as seen by the observer at each sample time.
+            _difference = (_s - observer).at(_ts_array)
+            _alt, _az, _distance = _difference.altaz()
+            _altitudes = _alt.degrees
+            # Count the number of minutes the satellite's altitude exceeds the threshold.
+            _visible_minutes = int(np.sum(_altitudes > threshold_alt_deg))
+            visible_data.append(
+                {"OBJECT_NAME": _s.name, "visible_minutes": _visible_minutes}
+            )
+        bar.clear()
     return (
+        bar,
+        end_date,
         observer,
         sample_datetimes,
         satellites_sky,
+        sensor_alt,
+        sensor_lat,
+        sensor_lon,
+        start_date,
         threshold_alt_deg,
         visible_data,
     )
@@ -252,15 +265,15 @@ def _(mo, pl, visible_data):
 def _(datetime, end_date, mo, start_date, ts):
     # Define the propagation interval using user-provided start_date and end_date
     _t0 = ts.utc(
-        start_date.value.year,
-        start_date.value.month,
-        start_date.value.day,
+        start_date.year,
+        start_date.month,
+        start_date.day,
         0,
         0,
         0,
     )
     _t1 = ts.utc(
-        end_date.value.year, end_date.value.month, end_date.value.day, 23, 59, 59
+        end_date.year, end_date.month, end_date.day, 23, 59, 59
     )
     _t0_dt = _t0.utc_datetime()
     _t1_dt = _t1.utc_datetime()
@@ -271,7 +284,10 @@ def _(datetime, end_date, mo, start_date, ts):
     _now = datetime.datetime.now(datetime.timezone.utc)
 
     # Find the index in sample_datetimes closest to now.
-    default_index = min(range(len(sample_datetimes_)), key=lambda i: abs(sample_datetimes_[i] - _now))
+    default_index = min(
+        range(len(sample_datetimes_)),
+        key=lambda i: abs(sample_datetimes_[i] - _now),
+    )
 
     # Create a slider to let the user select a time sample index.
     # (The slider returns a numeric value corresponding to an index in sample_datetimes.)
@@ -281,14 +297,18 @@ def _(datetime, end_date, mo, start_date, ts):
         step=10,
         value=default_index,
         label="Select Time",
-        show_value=False
+        show_value=False,
     )
     return default_index, mo_slider_time_index, sample_datetimes_
 
 
 @app.cell
 def _(mo, mo_slider_time_index, sample_datetimes_):
-    selected_dt_z = sample_datetimes_[mo_slider_time_index.value].isoformat().replace("+00:00", "Z")
+    selected_dt_z = (
+        sample_datetimes_[mo_slider_time_index.value]
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     mo.hstack([mo_slider_time_index, mo.md(f"{selected_dt_z}")], justify="start")
     return (selected_dt_z,)
 
@@ -336,15 +356,15 @@ def _(
 
     # Define the propagation interval using user-provided start_date and end_date
     _t0 = ts.utc(
-        start_date.value.year,
-        start_date.value.month,
-        start_date.value.day,
+        start_date.year,
+        start_date.month,
+        start_date.day,
         0,
         0,
         0,
     )
     _t1 = ts.utc(
-        end_date.value.year, end_date.value.month, end_date.value.day, 23, 59, 59
+        end_date.year, end_date.month, end_date.day, 23, 59, 59
     )
     _t0_dt = _t0.utc_datetime()
     _t1_dt = _t1.utc_datetime()
@@ -404,9 +424,9 @@ def _(
     _moon = _eph['moon']
 
     _observer = _earth + Topos(
-        latitude_degrees=sensor_lat.value,
-        longitude_degrees=sensor_lon.value,
-        elevation_m=sensor_alt.value * 1000,  # sensor_alt is in km, convert to meters
+        latitude_degrees=sensor_lat,
+        longitude_degrees=sensor_lon,
+        elevation_m=sensor_alt * 1000,  # sensor_alt is in km, convert to meters
     )
 
     # Compute the Moon's apparent position as seen by the observer at all sample times
@@ -493,7 +513,7 @@ def _(
         .properties(width=1200, height=600)
         .project(
             type="equalEarth",
-            rotate=[-float(sensor_lon.value), -float(sensor_lat.value), 0],
+            rotate=[-float(sensor_lon), -float(sensor_lat), 0],
         )
     )
 
@@ -544,9 +564,9 @@ def _(
     # Build a blue dot for the sensor site.
     _site_data = [
         {
-            "lat": sensor_lat.value,
-            "lon": sensor_lon.value,
-            "name": sensor_name.value,
+            "lat": sensor_lat,
+            "lon": sensor_lon,
+            "name": sensor_name,
         }
     ]
     _site_df = pd.DataFrame(_site_data)
@@ -579,7 +599,6 @@ def _(
         + _marker_chart
     )
     mo.ui.altair_chart(_chart)
-    _chart
     return (
         alt2,
         pd,
